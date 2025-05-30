@@ -1,4 +1,3 @@
-
 import { NextApiRequest, NextApiResponse } from 'next';
 import { createClient } from '@supabase/supabase-js';
 
@@ -16,7 +15,7 @@ interface ImportFigmaResponse {
   success: boolean;
   templateId?: string;
   svgUrl?: string;
-  svgStoragePath?: string;
+  svgStoragePath?: string | null; // Изменено: добавлен null
   error?: string;
   debug?: any;
 }
@@ -50,146 +49,145 @@ export default async function handler(
     const {
       figmaUrl,
       figmaFileKey,
-      figmaNodeId = '0:1',
+      figmaNodeId,
       templateName,
       templateDescription,
-      templateType = 'figma',
-      templateCategory = 'open-house'
+      templateType = 'social_media',
+      templateCategory = 'general'
     }: ImportFigmaRequest = req.body;
 
-    console.log(`[import-figma] [${requestId}] Request body:`, {
-      figmaUrl: figmaUrl?.substring(0, 50) + '...',
-      figmaFileKey,
-      templateName,
-      templateCategory
-    });
-
-    // Extract file key from URL if not provided directly
-    let cleanFileKey = figmaFileKey;
-    if (figmaUrl && !figmaFileKey) {
-      const matches = figmaUrl.match(/figma\.com\/(file|design)\/([^/?]+)/);
-      if (matches && matches[2]) {
-        cleanFileKey = matches[2];
-      }
-    }
-
-    if (!cleanFileKey) {
-      return res.status(400).json({
-        success: false,
-        error: 'Figma file key is required',
-        debug: { figmaUrl, figmaFileKey }
-      });
-    }
-
-    if (!templateName) {
+    if (!templateName?.trim()) {
       return res.status(400).json({
         success: false,
         error: 'Template name is required'
       });
     }
 
-    // Get environment variables
-    const figmaApiKey = process.env.FIGMA_API_KEY;
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    // Extract file key from URL or use provided key
+    let cleanFileKey = figmaFileKey;
+    if (!cleanFileKey && figmaUrl) {
+      const fileKeyMatch = figmaUrl.match(/\/file\/([a-zA-Z0-9]+)/);
+      if (fileKeyMatch) {
+        cleanFileKey = fileKeyMatch[1];
+      }
+    }
 
-    console.log(`[import-figma] [${requestId}] Environment check:`, {
-      hasFigmaKey: !!figmaApiKey,
-      hasSupabaseUrl: !!supabaseUrl,
-      hasSupabaseKey: !!supabaseServiceKey
-    });
-
-    if (!figmaApiKey) {
-      return res.status(500).json({
+    if (!cleanFileKey) {
+      return res.status(400).json({
         success: false,
-        error: 'Figma API key not configured'
+        error: 'Could not extract Figma file key from URL or no file key provided'
       });
     }
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return res.status(500).json({
-        success: false,
-        error: 'Supabase configuration missing'
-      });
-    }
+    console.log(`[import-figma] [${requestId}] File key: ${cleanFileKey}`);
 
     // Initialize Supabase client
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    console.log(`[import-figma] [${requestId}] Fetching Figma file: ${cleanFileKey}`);
+    const supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
 
     // Fetch Figma file data with timeout
-    const fileController = new AbortController();
-    const fileTimeoutId = setTimeout(() => fileController.abort(), 15000);
+    console.log(`[import-figma] [${requestId}] Fetching Figma file data...`);
+    const figmaController = new AbortController();
+    const figmaTimeoutId = setTimeout(() => figmaController.abort(), 15000);
 
-    const fileResponse = await fetch(`https://api.figma.com/v1/files/${cleanFileKey}`, {
+    const figmaResponse = await fetch(`https://api.figma.com/v1/files/${cleanFileKey}`, {
       headers: {
-        'X-Figma-Token': figmaApiKey
+        'X-Figma-Token': process.env.FIGMA_API_KEY!
       },
-      signal: fileController.signal
+      signal: figmaController.signal
     });
 
-    clearTimeout(fileTimeoutId);
+    clearTimeout(figmaTimeoutId);
 
-    if (!fileResponse.ok) {
-      const errorText = await fileResponse.text();
-      console.error(`[import-figma] [${requestId}] Figma file API error: ${fileResponse.status} - ${errorText}`);
+    if (!figmaResponse.ok) {
+      if (figmaResponse.status === 403) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. Please check your Figma API key or file permissions.'
+        });
+      }
+      if (figmaResponse.status === 404) {
+        return res.status(404).json({
+          success: false,
+          error: 'Figma file not found. Please check the file key.'
+        });
+      }
       return res.status(502).json({
         success: false,
-        error: `Figma file API error: ${fileResponse.status}`,
-        debug: { status: fileResponse.status, error: errorText }
+        error: 'Failed to fetch Figma file',
+        debug: { status: figmaResponse.status }
       });
     }
 
-    const fileData = await fileResponse.json();
-    console.log(`[import-figma] [${requestId}] Successfully fetched Figma file data`);
+    const figmaData = await figmaResponse.json();
+    if (!figmaData?.document) {
+      return res.status(502).json({
+        success: false,
+        error: 'Invalid Figma file structure'
+      });
+    }
 
-    // Get canvas dimensions
-    const firstPage = fileData.document?.children?.[0];
+    console.log(`[import-figma] [${requestId}] Figma file data fetched successfully`);
+
+    // Extract canvas dimensions
+    const document = figmaData.document;
     let canvasWidth = 1080;
-    let canvasHeight = 1350;
-    
-    if (firstPage && firstPage.absoluteBoundingBox) {
-      canvasWidth = Math.round(firstPage.absoluteBoundingBox.width);
-      canvasHeight = Math.round(firstPage.absoluteBoundingBox.height);
+    let canvasHeight = 1080;
+
+    if (document.children?.[0]?.children?.[0]?.absoluteBoundingBox) {
+      const bbox = document.children[0].children[0].absoluteBoundingBox;
+      canvasWidth = Math.round(bbox.width) || 1080;
+      canvasHeight = Math.round(bbox.height) || 1080;
     }
 
     console.log(`[import-figma] [${requestId}] Canvas dimensions: ${canvasWidth}x${canvasHeight}`);
 
-    // Export SVG with timeout
-    console.log(`[import-figma] [${requestId}] Exporting SVG for node: ${figmaNodeId}`);
-    const svgController = new AbortController();
-    const svgTimeoutId = setTimeout(() => svgController.abort(), 20000);
-
-    const svgResponse = await fetch(`https://api.figma.com/v1/images/${cleanFileKey}?ids=${figmaNodeId}&format=svg&svg_include_id=true`, {
-      headers: {
-        'X-Figma-Token': figmaApiKey
-      },
-      signal: svgController.signal
-    });
-
-    clearTimeout(svgTimeoutId);
-
-    if (!svgResponse.ok) {
-      const errorText = await svgResponse.text();
-      console.error(`[import-figma] [${requestId}] SVG export error: ${svgResponse.status} - ${errorText}`);
-      return res.status(502).json({
+    // Get SVG export
+    console.log(`[import-figma] [${requestId}] Exporting SVG...`);
+    const nodeToExport = figmaNodeId || document.children[0]?.id;
+    if (!nodeToExport) {
+      return res.status(400).json({
         success: false,
-        error: `SVG export error: ${svgResponse.status}`,
-        debug: { status: svgResponse.status, error: errorText }
+        error: 'No valid node found for export'
       });
     }
 
-    const svgData = await svgResponse.json();
-    const svgUrl = svgData.images?.[figmaNodeId];
+    const exportController = new AbortController();
+    const exportTimeoutId = setTimeout(() => exportController.abort(), 20000);
+
+    const exportResponse = await fetch(
+      `https://api.figma.com/v1/images/${cleanFileKey}?ids=${nodeToExport}&format=svg&use_absolute_bounds=true`,
+      {
+        headers: {
+          'X-Figma-Token': process.env.FIGMA_API_KEY!
+        },
+        signal: exportController.signal
+      }
+    );
+
+    clearTimeout(exportTimeoutId);
+
+    if (!exportResponse.ok) {
+      return res.status(502).json({
+        success: false,
+        error: 'Failed to export SVG from Figma',
+        debug: { status: exportResponse.status }
+      });
+    }
+
+    const exportData = await exportResponse.json();
+    const svgUrl = exportData?.images?.[nodeToExport];
 
     if (!svgUrl) {
       return res.status(502).json({
         success: false,
-        error: 'No SVG URL returned from Figma',
-        debug: { svgData }
+        error: 'No SVG URL received from Figma'
       });
     }
+
+    console.log(`[import-figma] [${requestId}] SVG export URL received`);
 
     // Fetch SVG content with timeout
     console.log(`[import-figma] [${requestId}] Fetching SVG content...`);
