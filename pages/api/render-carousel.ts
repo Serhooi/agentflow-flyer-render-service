@@ -1,4 +1,3 @@
-
 import { NextApiRequest, NextApiResponse } from 'next';
 import JSZip from 'jszip';
 import { SVGProcessor } from '../../lib/svg-processor';
@@ -9,13 +8,13 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<RenderCarouselResponse>
 ) {
-  // FIXED: Правильные CORS заголовки
+  // CORS заголовки
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Origin, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Max-Age', '86400');
 
-  // FIXED: Поддержка OPTIONS для preflight
+  // Поддержка OPTIONS для preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -35,7 +34,7 @@ export default async function handler(
       format = 'array'
     }: RenderCarouselRequest = req.body;
 
-    // Validate required fields
+    // Валидация обязательных полей
     if (!slides || !Array.isArray(slides) || slides.length === 0) {
       return res.status(400).json({
         success: false,
@@ -48,36 +47,36 @@ export default async function handler(
     const renderedImages: string[] = [];
     const imageBuffers: Buffer[] = [];
 
-    // Process each slide
+    // Обработка каждого слайда
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
       
       try {
         console.log(`Processing slide ${i + 1}/${slides.length}: ${slide.svgUrl}`);
 
-        // Step 1: Fetch SVG content
+        // Шаг 1: Получение SVG контента
         const svgContent = await SVGProcessor.fetchSVG(slide.svgUrl);
 
-        // Step 2: Validate SVG
+        // Шаг 2: Валидация SVG
         if (!SVGProcessor.validateSVG(svgContent)) {
           throw new Error(`Invalid SVG content for slide ${i + 1}`);
         }
 
-        // Step 3: Replace placeholders with data
+        // Шаг 3: Замена плейсхолдеров данными
         const processedSVG = SVGProcessor.replacePlaceholders(
           svgContent, 
           slide.data, 
           slide.fieldMappings
         );
 
-        // Step 4: Process images if needed
-        const finalSVG = await SVGProcessor.processImages(processedSVG);
+        // Шаг 4: Очистка SVG (ИСПРАВЛЕНО: использую cleanSVG вместо processImages)
+        const finalSVG = SVGProcessor.cleanSVG(processedSVG);
 
-        // Step 5: Render to PNG
+        // Шаг 5: Рендер в PNG
         const pngBuffer = await PNGRenderer.renderSVGToPNG(finalSVG, width, height);
         imageBuffers.push(pngBuffer);
 
-        // Step 6: Convert to base64 for array format
+        // Шаг 6: Конвертация в base64 для array формата
         if (format === 'array') {
           const base64 = PNGRenderer.bufferToBase64(pngBuffer);
           renderedImages.push(base64);
@@ -89,14 +88,14 @@ export default async function handler(
       }
     }
 
-    // Return result based on format
+    // Возврат результата в зависимости от формата
     if (format === 'array') {
       return res.status(200).json({
         success: true,
         images: renderedImages
       });
     } else {
-      // Create ZIP file
+      // Создание ZIP файла
       const zip = new JSZip();
       
       imageBuffers.forEach((buffer, index) => {
