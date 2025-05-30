@@ -1,16 +1,14 @@
-
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { EnhancedSVGProcessor } from '../../lib/enhanced-svg-processor';
+import { SVGProcessor } from '../../lib/svg-processor';
+import { PNGRenderer } from '../../lib/png-renderer';
 
 interface RenderRequest {
   svgUrl: string;
   data: Record<string, any>;
   fieldMappings?: Record<string, string>;
-  staticTextReplacements?: Record<string, string>;
   width?: number;
   height?: number;
   format?: 'base64' | 'png';
-  diagnostics?: any;
 }
 
 interface RenderResponse {
@@ -19,8 +17,6 @@ interface RenderResponse {
   error?: string;
   fieldsProcessed?: number;
   debugInfo?: {
-    warnings: string[];
-    stats: any;
     processingTime: number;
   };
 }
@@ -28,11 +24,8 @@ interface RenderResponse {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS,PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-Request-ID, X-Client-Info, apikey, Cache-Control, Pragma, x-client-info, x-supabase-auth, X-Field-Count, X-Generation-Path, X-Payload-Size',
-  'Access-Control-Max-Age': '86400',
-  'Cache-Control': 'no-cache, no-store, must-revalidate',
-  'Pragma': 'no-cache',
-  'Expires': '0'
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+  'Access-Control-Max-Age': '86400'
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<RenderResponse>) {
@@ -46,17 +39,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const startTime = Date.now();
-  const requestId = req.headers['x-request-id'] || Math.random().toString(36).substring(7);
   
   try {
-    console.log(`[RenderFlyer] 🚀 Enhanced request ${requestId} started`);
+    console.log('[RenderFlyer] Request started');
     
     // Add CORS headers
     Object.entries(corsHeaders).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
 
-    const { svgUrl, data, width, height, format, diagnostics }: RenderRequest = req.body;
+    const { svgUrl, data, fieldMappings = {}, width, height, format }: RenderRequest = req.body;
 
     if (!svgUrl) {
       return res.status(400).json({ success: false, error: 'svgUrl is required' });
@@ -66,104 +58,59 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ success: false, error: 'data object is required' });
     }
 
-    console.log(`[RenderFlyer] 📊 Request analysis:`, {
-      svgUrl: svgUrl.substring(0, 100) + '...',
-      dataKeys: Object.keys(data),
-      dataCount: Object.keys(data).length,
-      width: width || 'default',
-      height: height || 'default',
-      format: format || 'base64',
-      hasDiagnostics: !!diagnostics
-    });
-
-    // Fetch SVG content
-    console.log(`[RenderFlyer] 📡 Fetching SVG from: ${svgUrl}`);
-    const svgResponse = await fetch(svgUrl);
+    console.log('[RenderFlyer] Fetching SVG from:', svgUrl);
     
-    if (!svgResponse.ok) {
-      throw new Error(`Failed to fetch SVG: ${svgResponse.status} ${svgResponse.statusText}`);
+    // Получаем SVG
+    const svgContent = await SVGProcessor.fetchSVG(svgUrl);
+    console.log('[RenderFlyer] SVG fetched successfully');
+
+    // Валидируем SVG
+    if (!SVGProcessor.validateSVG(svgContent)) {
+      throw new Error('Invalid SVG content');
     }
 
-    const svgContent = await svgResponse.text();
-    console.log(`[RenderFlyer] 📄 SVG fetched successfully (${Math.round(svgContent.length / 1024)}KB)`);
+    // Заменяем плейсхолдеры
+    const processedSVG = SVGProcessor.replacePlaceholders(svgContent, data, fieldMappings);
+    
+    // Очищаем SVG
+    const finalSVG = SVGProcessor.cleanSVG(processedSVG);
 
-    // Initialize enhanced processor
-    const processor = new EnhancedSVGProcessor();
-
-    // Process SVG with enhanced features
-    const processingResult = await processor.processSVG(svgContent, data, {
-      maxWidth: width || 1080,
-      maxHeight: height || 1350,
-      quality: 90
-    });
-
-    console.log(`[RenderFlyer] 🔧 SVG processing complete:`, processingResult.stats);
-
-    // Render to PNG
-    const renderResult = await processor.renderToPNG(processingResult.processedSvg, {
-      width: width || 1080,
-      height: height || 1350
-    });
+    // Рендерим в PNG
+    const pngBuffer = await PNGRenderer.renderSVGToPNG(finalSVG, width || 1080, height || 1350);
 
     const processingTime = Date.now() - startTime;
 
     if (format === 'png') {
-      // Return PNG buffer directly
+      // Возвращаем PNG буфер напрямую
       res.setHeader('Content-Type', 'image/png');
-      res.setHeader('Content-Length', renderResult.buffer.length);
-      return res.status(200).send(renderResult.buffer);
+      res.setHeader('Content-Length', pngBuffer.length);
+      return res.status(200).send(pngBuffer);
     } else {
-      // Return base64 encoded image
-      const base64Image = renderResult.buffer.toString('base64');
+      // Возвращаем base64 encoded изображение
+      const base64Image = pngBuffer.toString('base64');
       const dataUrl = `data:image/png;base64,${base64Image}`;
 
-      const debugInfo = {
-        warnings: [...processingResult.warnings, ...renderResult.warnings],
-        stats: {
-          ...processingResult.stats,
-          finalPngSize: renderResult.buffer.length,
-          processingTime
-        },
-        processingTime,
-        enhancedFeatures: [
-          'Fragmented placeholder detection',
-          'Enhanced image embedding',
-          'PNG rendering with resvg-js',
-          'Vercel optimization',
-          'Advanced diagnostics'
-        ]
-      };
-
-      console.log(`[RenderFlyer] ✅ Enhanced rendering complete:`, {
-        fieldsProcessed: processingResult.stats.placeholdersReplaced,
-        warnings: debugInfo.warnings.length,
-        processingTime: `${processingTime}ms`,
-        pngSize: `${Math.round(renderResult.buffer.length / 1024)}KB`
-      });
+      console.log('[RenderFlyer] Rendering complete');
 
       return res.status(200).json({
         success: true,
         imageUrl: dataUrl,
-        fieldsProcessed: processingResult.stats.placeholdersReplaced,
-        debugInfo
+        fieldsProcessed: Object.keys(fieldMappings).length,
+        debugInfo: {
+          processingTime
+        }
       });
     }
 
   } catch (error) {
     const processingTime = Date.now() - startTime;
-    console.error(`[RenderFlyer] ❌ Enhanced rendering failed:`, error);
+    console.error('[RenderFlyer] Rendering failed:', error);
 
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
       debugInfo: {
-        processingTime,
-        requestId,
-        error: error instanceof Error ? {
-          name: error.name,
-          message: error.message,
-          stack: error.stack?.split('\n').slice(0, 5).join('\n')
-        } : { message: 'Unknown error' }
+        processingTime
       }
     });
   }
