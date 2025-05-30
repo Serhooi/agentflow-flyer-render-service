@@ -1,4 +1,3 @@
-
 export class SVGSanitizer {
   /**
    * Basic SVG sanitization without external dependencies
