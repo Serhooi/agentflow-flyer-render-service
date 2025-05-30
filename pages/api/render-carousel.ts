@@ -34,7 +34,7 @@ export default async function handler(
       format = 'array'
     }: RenderCarouselRequest = req.body;
 
-    // Валидация обязательных полей
+    // Валидация
     if (!slides || !Array.isArray(slides) || slides.length === 0) {
       return res.status(400).json({
         success: false,
@@ -54,29 +54,29 @@ export default async function handler(
       try {
         console.log(`Processing slide ${i + 1}/${slides.length}: ${slide.svgUrl}`);
 
-        // Шаг 1: Получение SVG контента
+        // 1. Получаем SVG
         const svgContent = await SVGProcessor.fetchSVG(slide.svgUrl);
 
-        // Шаг 2: Валидация SVG
+        // 2. Валидируем SVG
         if (!SVGProcessor.validateSVG(svgContent)) {
           throw new Error(`Invalid SVG content for slide ${i + 1}`);
         }
 
-        // Шаг 3: Замена плейсхолдеров данными
+        // 3. Заменяем плейсхолдеры
         const processedSVG = SVGProcessor.replacePlaceholders(
           svgContent, 
           slide.data, 
           slide.fieldMappings
         );
 
-        // Шаг 4: Очистка SVG (ИСПРАВЛЕНО: использую cleanSVG вместо processImages)
+        // 4. Очищаем SVG (ИСПРАВЛЕНО: убрали await и processImages)
         const finalSVG = SVGProcessor.cleanSVG(processedSVG);
 
-        // Шаг 5: Рендер в PNG
+        // 5. Рендерим в PNG
         const pngBuffer = await PNGRenderer.renderSVGToPNG(finalSVG, width, height);
         imageBuffers.push(pngBuffer);
 
-        // Шаг 6: Конвертация в base64 для array формата
+        // 6. Конвертируем в base64 для массива
         if (format === 'array') {
           const base64 = PNGRenderer.bufferToBase64(pngBuffer);
           renderedImages.push(base64);
@@ -88,14 +88,14 @@ export default async function handler(
       }
     }
 
-    // Возврат результата в зависимости от формата
+    // Возвращаем результат в зависимости от формата
     if (format === 'array') {
       return res.status(200).json({
         success: true,
         images: renderedImages
       });
     } else {
-      // Создание ZIP файла
+      // Создаем ZIP файл
       const zip = new JSZip();
       
       imageBuffers.forEach((buffer, index) => {
