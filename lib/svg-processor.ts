@@ -1,4 +1,3 @@
-
 export class SVGProcessor {
   /**
    * Simple SVG fetching
