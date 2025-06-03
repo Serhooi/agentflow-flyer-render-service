@@ -55,10 +55,12 @@ export class SVGProcessor {
         console.log(`Processing ${fieldName} -> ${nodeIdentifier}: "${stringValue}"`);
 
         // Simple text replacement patterns
+        const escapedId = nodeIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const patterns = [
-          new RegExp(`(<text[^>]*id="[^"]*${nodeIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^"]*"[^>]*>)([^<]*)(</text>)`, 'gi'),
-          new RegExp(`(<text[^>]*id="${nodeIdentifier}"[^>]*>)([^<]*)(</text>)`, 'gi'),
-          new RegExp(`(<tspan[^>]*>)([^<]*)(</tspan>)`, 'gi')
+          new RegExp(`(<text[^>]*id="[^\"]*${escapedId}[^\"]*"[^>]*>)([^<]*)(</text>)`, 'gi'),
+          new RegExp(`(<text[^>]*id="${escapedId}"[^>]*>)([^<]*)(</text>)`, 'gi'),
+          new RegExp(`(<tspan[^>]*id="[^\"]*${escapedId}[^\"]*"[^>]*>)([^<]*)(</tspan>)`, 'gi'),
+          new RegExp(`(<tspan[^>]*id="${escapedId}"[^>]*>)([^<]*)(</tspan>)`, 'gi')
         ];
 
         let replaced = false;
