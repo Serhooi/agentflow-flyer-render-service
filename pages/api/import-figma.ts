@@ -158,7 +158,7 @@ export default async function handler(
     const exportTimeoutId = setTimeout(() => exportController.abort(), 20000);
 
     const exportResponse = await fetch(
-      `https://api.figma.com/v1/images/${cleanFileKey}?ids=${nodeToExport}&format=svg&use_absolute_bounds=true`,
+      `https://api.figma.com/v1/images/${cleanFileKey}?ids=${nodeToExport}&format=svg&use_absolute_bounds=true&svg_include_id=true&svg_outline_text=false`,
       {
         headers: {
           'X-Figma-Token': process.env.FIGMA_API_KEY!
